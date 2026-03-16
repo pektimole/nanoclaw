@@ -60,6 +60,12 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import {
+  rayCheck,
+  blockedNotification,
+  type Channel as RayChannel,
+  type RayScanOutput,
+} from './ray-scan.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -72,6 +78,27 @@ let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+
+/** Map a NanoClaw JID to a Ray channel type. */
+function rayChannelFromJid(jid: string): RayChannel {
+  if (jid.startsWith('tg:')) return 'telegram';
+  if (jid.startsWith('slack:')) return 'slack';
+  if (jid.startsWith('discord:')) return 'discord';
+  return 'whatsapp';
+}
+
+/** Append a scan result to the rolling Ray scan log. */
+function logRayScan(result: RayScanOutput, channel: string): void {
+  try {
+    const entry = { ...result, channel, logged_at: new Date().toISOString() };
+    fs.appendFileSync(
+      path.join(process.cwd(), 'logs', 'ray-scan.log'),
+      JSON.stringify(entry) + '\n',
+    );
+  } catch {
+    // Best-effort logging — don't crash the message pipeline
+  }
+}
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -564,7 +591,36 @@ async function main(): Promise<void> {
           return;
         }
       }
-      storeMessage(msg);
+
+      // Ray scan — check inbound messages before storing
+      const rayChannel = rayChannelFromJid(chatJid);
+      rayCheck(msg.content, rayChannel, chatJid, msg.sender ?? null, false)
+        .then(({ pass, scanResult }) => {
+          if (scanResult.verdict !== 'clean') {
+            logRayScan(scanResult, rayChannel);
+            logger.info(
+              { chatJid, verdict: scanResult.verdict, scanId: scanResult.scan_id },
+              `Ray scan: ${scanResult.explanation}`,
+            );
+          }
+          if (!pass) {
+            // Blocked — notify Tim and drop the message
+            const notification = blockedNotification(scanResult, msg.sender);
+            const mainJids = Object.entries(registeredGroups)
+              .filter(([, g]) => g.isMain)
+              .map(([jid]) => jid);
+            for (const mainJid of mainJids) {
+              const ch = findChannel(channels, mainJid);
+              if (ch) ch.sendMessage(mainJid, notification).catch(() => {});
+            }
+            return;
+          }
+          storeMessage(msg);
+        })
+        .catch((err) => {
+          logger.error({ err, chatJid }, 'Ray scan error, storing message anyway');
+          storeMessage(msg);
+        });
     },
     onChatMetadata: (
       chatJid: string,

@@ -19,6 +19,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { rayScan, blockedNotification, type RayScanOutput } from './ray-scan.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -185,6 +186,34 @@ async function runTask(
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
+
+          // Ray scan — check scheduled task output before sending
+          const scanResult = await rayScan({
+            source: { channel: 'artifact', pipeline_stage: 'output', sender: null },
+            payload: { type: 'text', content: streamedOutput.result },
+            context: { session_id: task.id, host_environment: 'nanoclaw' },
+          });
+
+          if (scanResult.verdict === 'blocked') {
+            logger.warn(
+              { taskId: task.id, scanId: scanResult.scan_id },
+              `Ray blocked scheduled task output: ${scanResult.explanation}`,
+            );
+            await deps.sendMessage(
+              task.chat_jid,
+              blockedNotification(scanResult, 'scheduled-task'),
+            );
+            scheduleClose();
+            return;
+          }
+
+          if (scanResult.verdict !== 'clean') {
+            logger.info(
+              { taskId: task.id, verdict: scanResult.verdict, scanId: scanResult.scan_id },
+              `Ray scan task output: ${scanResult.explanation}`,
+            );
+          }
+
           // Forward result to user (sendMessage handles formatting)
           await deps.sendMessage(task.chat_jid, streamedOutput.result);
           scheduleClose();
