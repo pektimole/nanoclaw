@@ -19,7 +19,11 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { rayScan, blockedNotification, type RayScanOutput } from './ray-scan.js';
+import {
+  rayScan,
+  blockedNotification,
+  type RayScanOutput,
+} from './ray-scan.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -189,7 +193,11 @@ async function runTask(
 
           // Ray scan — check scheduled task output before sending
           const scanResult = await rayScan({
-            source: { channel: 'artifact', pipeline_stage: 'output', sender: null },
+            source: {
+              channel: 'artifact',
+              pipeline_stage: 'output',
+              sender: null,
+            },
             payload: { type: 'text', content: streamedOutput.result },
             context: { session_id: task.id, host_environment: 'nanoclaw' },
           });
@@ -209,7 +217,11 @@ async function runTask(
 
           if (scanResult.verdict !== 'clean') {
             logger.info(
-              { taskId: task.id, verdict: scanResult.verdict, scanId: scanResult.scan_id },
+              {
+                taskId: task.id,
+                verdict: scanResult.verdict,
+                scanId: scanResult.scan_id,
+              },
               `Ray scan task output: ${scanResult.explanation}`,
             );
           }

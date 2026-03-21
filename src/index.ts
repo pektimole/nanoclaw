@@ -70,6 +70,33 @@ import {
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 
+/** Kill any process holding a port before we try to bind it.
+ *  Prevents EADDRINUSE when a previous instance didn't release the port.
+ */
+async function freePort(port: number): Promise<void> {
+  const { execSync } = await import('child_process');
+  try {
+    const result = execSync(`lsof -ti tcp:${port} 2>/dev/null || true`, {
+      encoding: 'utf8',
+    }).trim();
+    if (result) {
+      const pids = result.split('\n').filter(Boolean);
+      for (const pid of pids) {
+        try {
+          process.kill(parseInt(pid, 10), 'SIGKILL');
+          logger.warn({ port, pid }, 'Killed stale process holding port');
+        } catch {
+          // already dead
+        }
+      }
+      // brief wait for OS to release the port
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  } catch {
+    // lsof not available or nothing to kill — proceed
+  }
+}
+
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
@@ -504,6 +531,8 @@ async function main(): Promise<void> {
   loadState();
   restoreRemoteControl();
 
+  // Start credential proxy — release stale port holder first
+  await freePort(CREDENTIAL_PROXY_PORT);
   // Start credential proxy (containers route API calls through this)
   const proxyServer = await startCredentialProxy(
     CREDENTIAL_PROXY_PORT,
@@ -520,6 +549,17 @@ async function main(): Promise<void> {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('unhandledRejection', (reason) => {
+    logger.fatal(
+      { reason },
+      'Unhandled promise rejection — triggering shutdown',
+    );
+    shutdown('unhandledRejection').catch(() => process.exit(1));
+  });
+  process.on('uncaughtException', (err) => {
+    logger.fatal({ err }, 'Uncaught exception — triggering shutdown');
+    shutdown('uncaughtException').catch(() => process.exit(1));
+  });
 
   // Handle /remote-control and /remote-control-end commands
   async function handleRemoteControl(
@@ -599,7 +639,11 @@ async function main(): Promise<void> {
           if (scanResult.verdict !== 'clean') {
             logRayScan(scanResult, rayChannel);
             logger.info(
-              { chatJid, verdict: scanResult.verdict, scanId: scanResult.scan_id },
+              {
+                chatJid,
+                verdict: scanResult.verdict,
+                scanId: scanResult.scan_id,
+              },
               `Ray scan: ${scanResult.explanation}`,
             );
           }
@@ -618,7 +662,10 @@ async function main(): Promise<void> {
           storeMessage(msg);
         })
         .catch((err) => {
-          logger.error({ err, chatJid }, 'Ray scan error, storing message anyway');
+          logger.error(
+            { err, chatJid },
+            'Ray scan error, storing message anyway',
+          );
           storeMessage(msg);
         });
     },
