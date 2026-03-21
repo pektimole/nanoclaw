@@ -102,6 +102,7 @@ let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
+let raiEnabled = true; // Toggle via !rai off / !rai on from trusted principal
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
@@ -632,7 +633,33 @@ async function main(): Promise<void> {
         }
       }
 
+      // RAI toggle commands (trusted principal only)
+      if (msg.is_from_me && !msg.is_bot_message) {
+        if (msg.content.trim().toLowerCase() === "!rai off") {
+          raiEnabled = false;
+          const ch = findChannel(channels, chatJid);
+          if (ch) ch.sendMessage(chatJid, "RAI disabled. Send !rai on to re-enable.").catch(() => {});
+          return;
+        }
+        if (msg.content.trim().toLowerCase() === "!rai on") {
+          raiEnabled = true;
+          const ch = findChannel(channels, chatJid);
+          if (ch) ch.sendMessage(chatJid, "RAI re-enabled.").catch(() => {});
+          return;
+        }
+      }
+
+      // Ray scan — skip for own messages (Tim typing natively)
+      if (msg.is_from_me && !msg.is_bot_message) {
+        storeMessage(msg);
+        return;
+      }
+
       // Ray scan — check inbound messages before storing
+      if (!raiEnabled) {
+        storeMessage(msg);
+        return;
+      }
       const rayChannel = rayChannelFromJid(chatJid);
       rayCheck(msg.content, rayChannel, chatJid, msg.sender ?? null, false)
         .then(({ pass, scanResult }) => {
