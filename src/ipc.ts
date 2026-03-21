@@ -1,3 +1,4 @@
+import { execSync } from "child_process";
 import fs from 'fs';
 import path from 'path';
 
@@ -171,6 +172,10 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // context_update fields
+    file?: string;
+    content?: string;
+    commit_message?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -448,6 +453,65 @@ export async function processTaskIpc(
         );
       }
       break;
+
+    case 'context_update': {
+      // Secure write-back to No5 context layer (RAI Write Gate)
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized context_update attempt blocked — main only');
+        break;
+      }
+
+      const file = data.file as string | undefined;
+      const content = data.content as string | undefined;
+      const commitMessage = data.commit_message as string | undefined;
+
+      if (!file || !content || !commitMessage) {
+        logger.warn({ data: { file, hasContent: !!content, commitMessage } }, 'context_update missing required fields');
+        break;
+      }
+
+      // Blocked files (defense in depth — agent also validates)
+      const BLOCKED_FILES = new Set(['00-WAKE.md', '00-README.md', 'REGISTRY.md']);
+      if (BLOCKED_FILES.has(file)) {
+        logger.warn({ file, sourceGroup }, 'context_update blocked — protected file');
+        break;
+      }
+
+      // Must be a simple filename (no path traversal)
+      if (file.includes('/') || file.includes('..') || !file.endsWith('.md')) {
+        logger.warn({ file, sourceGroup }, 'context_update blocked — invalid filename');
+        break;
+      }
+
+      // Size limit
+      if (content.length > 50000) {
+        logger.warn({ file, size: content.length }, 'context_update blocked — content too large');
+        break;
+      }
+
+      const contextDir = path.join(process.env.HOME || '/home/tim', 'no5-context');
+      const targetPath = path.resolve(contextDir, file);
+
+      // Ensure resolved path is within contextDir (prevent traversal)
+      if (!targetPath.startsWith(contextDir + '/')) {
+        logger.warn({ file, targetPath }, 'context_update blocked — path traversal detected');
+        break;
+      }
+
+      try {
+        fs.writeFileSync(targetPath, content, 'utf-8');
+        const safeMsg = commitMessage.replace(/['"`$\\]/g, '-');
+        execSync(`cd ${contextDir} && git add ${file} && git commit -m "${safeMsg} [nanoclaw]" && git push`, {
+          timeout: 15000,
+          stdio: 'pipe',
+        });
+        logger.info({ file, sourceGroup, commitMessage: safeMsg }, 'context_update committed and pushed');
+      } catch (err) {
+        logger.error({ file, err }, 'context_update failed');
+      }
+      break;
+    }
+
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');

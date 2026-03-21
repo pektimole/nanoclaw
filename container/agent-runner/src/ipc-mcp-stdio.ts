@@ -336,3 +336,89 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+// ---------------------------------------------------------------------------
+// context_update — Secure write-back to No5 context layer via host IPC
+// ---------------------------------------------------------------------------
+
+const CONTEXT_WRITABLE_FILES = new Set([
+  '01-decision-log.md',
+  '02-open-loops.md',
+  '03-tone-of-voice.md',
+  '04-gomedicus-context.md',
+  '05-aera-context.md',
+  '06-aroundcapital-context.md',
+  '08-notion-skills.md',
+  '10-capital-mechanics.md',
+  '11-rails-group-techco.md',
+  '12-isarklinik-deal.md',
+  '13-gomedicus-brand-skill.md',
+  '14-chatgpt-keyword-map.md',
+  '15-medkitdoc-brand-skill.md',
+  '16-medkitdoc-strategy.md',
+  '18-impact-liebenberg-deals.md',
+  '19-ray-context.md',
+  '21-personal-paingain.md',
+]);
+
+// Files that can NEVER be written via this tool (defense in depth)
+const CONTEXT_BLOCKED_FILES = new Set([
+  '00-WAKE.md',
+  '00-README.md',
+  'REGISTRY.md',
+]);
+
+server.tool(
+  'context_update',
+  `Write an update to a No5 context layer file. The update is committed and pushed to GitHub by the host process.
+
+SECURITY: This tool writes through a gated IPC boundary. The host validates the file path against an allowlist before writing. Critical files (WAKE.md, REGISTRY.md) are blocked.
+
+USE THIS WHEN: Tim asks you to update open loops, log a decision, or modify any context layer file. Do NOT tell Tim to do it manually — use this tool.
+
+IMPORTANT: You must provide the FULL file content, not a diff. Read the current file first if you need to make a partial change.`,
+  {
+    file: z.string().describe('Filename in no5-context (e.g., "02-open-loops.md"). No path prefix.'),
+    content: z.string().describe('Full file content to write. Must be complete — this replaces the entire file.'),
+    commit_message: z.string().describe('Git commit message (e.g., "update OL-022: mark as done")'),
+  },
+  async (args) => {
+    // Client-side validation (defense in depth — host re-validates)
+    if (CONTEXT_BLOCKED_FILES.has(args.file)) {
+      return {
+        content: [{ type: 'text' as const, text: `Blocked: ${args.file} cannot be modified via this tool.` }],
+        isError: true,
+      };
+    }
+
+    if (!CONTEXT_WRITABLE_FILES.has(args.file)) {
+      return {
+        content: [{ type: 'text' as const, text: `Unknown file: ${args.file}. Allowed files: ${[...CONTEXT_WRITABLE_FILES].join(', ')}` }],
+        isError: true,
+      };
+    }
+
+    if (args.content.length > 50000) {
+      return {
+        content: [{ type: 'text' as const, text: `Content too large (${args.content.length} bytes). Max 50KB.` }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'context_update',
+      file: args.file,
+      content: args.content,
+      commit_message: args.commit_message,
+      groupFolder,
+      isMain: String(isMain),
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Context update queued: ${args.file} (${args.content.length} bytes). Host will commit and push.` }],
+    };
+  },
+);
