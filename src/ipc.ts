@@ -10,6 +10,7 @@ import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
+import { evaluate, nanoclawDefaultPolicy, type FsGitAction } from './action-gate.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -455,15 +456,9 @@ export async function processTaskIpc(
       break;
 
     case 'context_update': {
-      // Secure write-back to No5 context layer (RAI Write Gate)
-      if (!isMain) {
-        logger.warn(
-          { sourceGroup },
-          'Unauthorized context_update attempt blocked — main only',
-        );
-        break;
-      }
-
+      // Secure write-back to No5 context layer (RAI ActionGate L4)
+      // Policy engine lifted from inline checks into @rai/action-gate.
+      // Behavior is bit-for-bit equivalent to the original 5-layer Write Gate.
       const file = data.file as string | undefined;
       const content = data.content as string | undefined;
       const commitMessage = data.commit_message as string | undefined;
@@ -476,69 +471,52 @@ export async function processTaskIpc(
         break;
       }
 
-      // Blocked files (defense in depth — agent also validates)
-      const BLOCKED_FILES = new Set([
-        '00-WAKE.md',
-        '00-README.md',
-        'REGISTRY.md',
-      ]);
-      if (BLOCKED_FILES.has(file)) {
-        logger.warn(
-          { file, sourceGroup },
-          'context_update blocked — protected file',
-        );
-        break;
-      }
-
-      // Must be a simple filename (no path traversal)
-      if (file.includes('/') || file.includes('..') || !file.endsWith('.md')) {
-        logger.warn(
-          { file, sourceGroup },
-          'context_update blocked — invalid filename',
-        );
-        break;
-      }
-
-      // Size limit
-      if (content.length > 50000) {
-        logger.warn(
-          { file, size: content.length },
-          'context_update blocked — content too large',
-        );
-        break;
-      }
-
       const contextDir = path.join(
         process.env.HOME || '/home/tim',
         'no5-context',
       );
-      const targetPath = path.resolve(contextDir, file);
 
-      // Ensure resolved path is within contextDir (prevent traversal)
-      if (!targetPath.startsWith(contextDir + '/')) {
+      const gateAction: FsGitAction = {
+        kind: 'fs-git-write',
+        file,
+        content,
+        commitMessage,
+        sourceGroup,
+      };
+
+      const verdict = evaluate(gateAction, nanoclawDefaultPolicy(contextDir));
+
+      if (verdict.decision === 'deny') {
         logger.warn(
-          { file, targetPath },
-          'context_update blocked — path traversal detected',
+          { file, sourceGroup, rule: verdict.rule, reason: verdict.reason },
+          'context_update blocked by ActionGate',
         );
         break;
       }
 
+      // Apply sanitization if verdict says so
+      const finalAction = verdict.decision === 'sanitize' && verdict.sanitized
+        ? verdict.sanitized
+        : gateAction;
+
+      const targetPath = path.resolve(contextDir, finalAction.file);
+
       try {
-        fs.writeFileSync(targetPath, content, 'utf-8');
-        const safeMsg = commitMessage.replace(/['"`$\\]/g, '-');
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        fs.writeFileSync(targetPath, finalAction.content, 'utf-8');
         execSync(
-          `cd ${contextDir} && git add ${file} && git commit -m "${safeMsg} [nanoclaw]" && git push`,
+          `cd ${contextDir} && git add ${finalAction.file} && git commit -m "${finalAction.commitMessage} [nanoclaw]" && git push`,
           {
             timeout: 15000,
             stdio: 'pipe',
           },
         );
         logger.info(
-          { file, sourceGroup, commitMessage: safeMsg },
+          { file: finalAction.file, sourceGroup, rule: verdict.rule, commitMessage: finalAction.commitMessage },
           'context_update committed and pushed',
         );
       } catch (err) {
-        logger.error({ file, err }, 'context_update failed');
+        logger.error({ file: finalAction.file, err }, 'context_update failed');
       }
       break;
     }
