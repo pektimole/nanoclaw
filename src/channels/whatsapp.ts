@@ -9,7 +9,9 @@ import makeWASocket, {
   fetchLatestWaWebVersion,
   makeCacheableSignalKeyStore,
   normalizeMessageContent,
+  downloadMediaMessage,
   useMultiFileAuthState,
+  type WAMessage,
 } from '@whiskeysockets/baileys';
 
 import {
@@ -18,6 +20,7 @@ import {
   STORE_DIR,
 } from '../config.js';
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
+import { transcribeAudio, saveAudioFile, cleanupAudioFile } from '../voice-transcribe.js';
 import { logger } from '../logger.js';
 import {
   Channel,
@@ -203,6 +206,14 @@ export class WhatsAppChannel implements Channel {
           // Only deliver full message for registered groups
           const groups = this.opts.registeredGroups();
           if (groups[chatJid]) {
+            // Handle audio messages (voice notes)
+            if (normalized.audioMessage) {
+              this.handleAudioMessage(msg, normalized, chatJid, timestamp).catch(
+                (err) => logger.error({ err, chatJid }, 'Audio message handling failed'),
+              );
+              continue;
+            }
+
             const content =
               normalized.conversation ||
               normalized.extendedTextMessage?.text ||
@@ -246,7 +257,77 @@ export class WhatsAppChannel implements Channel {
     });
   }
 
-  async sendMessage(jid: string, text: string): Promise<void> {
+  /**
+   * Handle incoming audio/voice message: download, ack, transcribe, deliver.
+   */
+  private async handleAudioMessage(
+    msg: WAMessage,
+    normalized: ReturnType<typeof normalizeMessageContent>,
+    chatJid: string,
+    timestamp: string,
+  ): Promise<void> {
+    const groups = this.opts.registeredGroups();
+    if (!groups[chatJid]) return; // Only process registered groups
+
+    const sender = msg.key.participant || msg.key.remoteJid || '';
+    const senderName = msg.pushName || sender.split('@')[0];
+    const fromMe = msg.key.fromMe || false;
+
+    // Send immediate acknowledgment
+    await this.sock.sendMessage(chatJid, {
+      text: ASSISTANT_HAS_OWN_NUMBER
+        ? '🎙️ Audio empfangen, wird transkribiert...'
+        : `${ASSISTANT_NAME}: 🎙️ Audio empfangen, wird transkribiert...`,
+    });
+
+    try {
+      // Download audio from WhatsApp
+      const buffer = await downloadMediaMessage(msg, 'buffer', {}) as Buffer;
+      const audioPath = saveAudioFile(buffer, msg.key.id || `audio-${Date.now()}`);
+
+      // Transcribe (routes to Mac if online, VPS fallback)
+      const result = await transcribeAudio(audioPath);
+      cleanupAudioFile(audioPath);
+
+      if (!result) {
+        await this.sock.sendMessage(chatJid, {
+          text: ASSISTANT_HAS_OWN_NUMBER
+            ? '❌ Transkription fehlgeschlagen.'
+            : `${ASSISTANT_NAME}: ❌ Transkription fehlgeschlagen.`,
+        });
+        return;
+      }
+
+      const { transcript, source } = result;
+      const sourceLabel = source === 'mac' ? 'Mac' : 'VPS';
+      logger.info({ chatJid, source: sourceLabel, length: transcript.length }, 'Audio transcribed');
+
+      // Deliver transcribed text as a regular message (triggers No5 processing)
+      const isBotMessage = ASSISTANT_HAS_OWN_NUMBER
+        ? fromMe
+        : transcript.startsWith(`${ASSISTANT_NAME}:`);
+
+      this.opts.onMessage(chatJid, {
+        id: msg.key.id || '',
+        chat_jid: chatJid,
+        sender,
+        sender_name: senderName,
+        content: `[Voice → ${sourceLabel}] ${transcript}`,
+        timestamp,
+        is_from_me: fromMe,
+        is_bot_message: isBotMessage,
+      });
+    } catch (err) {
+      logger.error({ err, chatJid }, 'Failed to process audio message');
+      await this.sock.sendMessage(chatJid, {
+        text: ASSISTANT_HAS_OWN_NUMBER
+          ? '❌ Audio konnte nicht verarbeitet werden.'
+          : `${ASSISTANT_NAME}: ❌ Audio konnte nicht verarbeitet werden.`,
+      });
+    }
+  }
+
+    async sendMessage(jid: string, text: string): Promise<void> {
     // Prefix bot messages with assistant name so users know who's speaking.
     // On a shared number, prefix is also needed in DMs (including self-chat)
     // to distinguish bot output from user messages.
