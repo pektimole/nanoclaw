@@ -203,7 +203,9 @@ export function evaluate(action: FsGitAction, policy: FsGitPolicy): Verdict {
 
   // 10. Resolved-path containment (defeats symlink + tricky path tricks)
   const resolved = path.resolve(policy.root, action.file);
-  const rootWithSep = policy.root.endsWith('/') ? policy.root : policy.root + '/';
+  const rootWithSep = policy.root.endsWith('/')
+    ? policy.root
+    : policy.root + '/';
   if (!resolved.startsWith(rootWithSep)) {
     return {
       decision: 'deny',

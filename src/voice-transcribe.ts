@@ -49,7 +49,10 @@ async function transcribeViaMac(audioPath: string): Promise<string | null> {
     const transcript = await res.text();
     const duration = res.headers.get('X-Duration') || '?';
     const lang = res.headers.get('X-Language') || '?';
-    logger.info({ duration, lang, length: transcript.length }, 'Mac transcription complete');
+    logger.info(
+      { duration, lang, length: transcript.length },
+      'Mac transcription complete',
+    );
     return transcript.trim();
   } catch (err) {
     logger.error({ err }, 'Mac transcription error');

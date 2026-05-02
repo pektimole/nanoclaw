@@ -10,7 +10,11 @@ import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
-import { evaluate, nanoclawDefaultPolicy, type FsGitAction } from './action-gate.js';
+import {
+  evaluate,
+  nanoclawDefaultPolicy,
+  type FsGitAction,
+} from './action-gate.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -495,9 +499,10 @@ export async function processTaskIpc(
       }
 
       // Apply sanitization if verdict says so
-      const finalAction = verdict.decision === 'sanitize' && verdict.sanitized
-        ? verdict.sanitized
-        : gateAction;
+      const finalAction =
+        verdict.decision === 'sanitize' && verdict.sanitized
+          ? verdict.sanitized
+          : gateAction;
 
       const targetPath = path.resolve(contextDir, finalAction.file);
 
@@ -512,7 +517,12 @@ export async function processTaskIpc(
           },
         );
         logger.info(
-          { file: finalAction.file, sourceGroup, rule: verdict.rule, commitMessage: finalAction.commitMessage },
+          {
+            file: finalAction.file,
+            sourceGroup,
+            rule: verdict.rule,
+            commitMessage: finalAction.commitMessage,
+          },
           'context_update committed and pushed',
         );
       } catch (err) {

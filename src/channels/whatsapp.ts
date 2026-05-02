@@ -20,7 +20,11 @@ import {
   STORE_DIR,
 } from '../config.js';
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
-import { transcribeAudio, saveAudioFile, cleanupAudioFile } from '../voice-transcribe.js';
+import {
+  transcribeAudio,
+  saveAudioFile,
+  cleanupAudioFile,
+} from '../voice-transcribe.js';
 import { logger } from '../logger.js';
 import {
   Channel,
@@ -208,8 +212,13 @@ export class WhatsAppChannel implements Channel {
           if (groups[chatJid]) {
             // Handle audio messages (voice notes)
             if (normalized.audioMessage) {
-              this.handleAudioMessage(msg, normalized, chatJid, timestamp).catch(
-                (err) => logger.error({ err, chatJid }, 'Audio message handling failed'),
+              this.handleAudioMessage(
+                msg,
+                normalized,
+                chatJid,
+                timestamp,
+              ).catch((err) =>
+                logger.error({ err, chatJid }, 'Audio message handling failed'),
               );
               continue;
             }
@@ -282,8 +291,11 @@ export class WhatsAppChannel implements Channel {
 
     try {
       // Download audio from WhatsApp
-      const buffer = await downloadMediaMessage(msg, 'buffer', {}) as Buffer;
-      const audioPath = saveAudioFile(buffer, msg.key.id || `audio-${Date.now()}`);
+      const buffer = (await downloadMediaMessage(msg, 'buffer', {})) as Buffer;
+      const audioPath = saveAudioFile(
+        buffer,
+        msg.key.id || `audio-${Date.now()}`,
+      );
 
       // Transcribe (routes to Mac if online, VPS fallback)
       const result = await transcribeAudio(audioPath);
@@ -300,7 +312,10 @@ export class WhatsAppChannel implements Channel {
 
       const { transcript, source } = result;
       const sourceLabel = source === 'mac' ? 'Mac' : 'VPS';
-      logger.info({ chatJid, source: sourceLabel, length: transcript.length }, 'Audio transcribed');
+      logger.info(
+        { chatJid, source: sourceLabel, length: transcript.length },
+        'Audio transcribed',
+      );
 
       // Deliver transcribed text as a regular message (triggers No5 processing)
       const isBotMessage = ASSISTANT_HAS_OWN_NUMBER
@@ -327,7 +342,7 @@ export class WhatsAppChannel implements Channel {
     }
   }
 
-    async sendMessage(jid: string, text: string): Promise<void> {
+  async sendMessage(jid: string, text: string): Promise<void> {
     // Prefix bot messages with assistant name so users know who's speaking.
     // On a shared number, prefix is also needed in DMs (including self-chat)
     // to distinguish bot output from user messages.
