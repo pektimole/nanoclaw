@@ -460,17 +460,15 @@ async function handleProposalBoost(
     .map((s) => s.trim())
     .filter(Boolean);
   const script =
-    "import sys, ambient_ranking; " +
-    "ids=[int(x) for x in sys.argv[1:]]; " +
-    "n=ambient_ranking.mark_positive(ids); " +
-    "print(n)";
+    'import sys, ambient_ranking; ' +
+    'ids=[int(x) for x in sys.argv[1:]]; ' +
+    'n=ambient_ranking.mark_positive(ids); ' +
+    'print(n)';
   const args = ['-c', script, ...ids];
   const child = spawn('python3', args, { cwd: '/home/tim/nanoclaw' });
   let out = '';
   child.stdout.on('data', (d) => (out += d.toString()));
-  await new Promise<void>((resolve) =>
-    child.on('close', () => resolve()),
-  );
+  await new Promise<void>((resolve) => child.on('close', () => resolve()));
   const n = parseInt(out.trim(), 10) || 0;
   await channel.sendMessage(
     chatJid,

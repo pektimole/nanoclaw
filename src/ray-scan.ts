@@ -21,6 +21,8 @@
  */
 
 import { randomUUID } from 'crypto';
+import { loadP0Weights } from './threat-weights.js';
+import { getDefaultScanLog } from './scan-log.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -220,6 +222,13 @@ const PATTERNS: Pattern[] = [
     signal: 'Anthropic API key pattern detected in payload',
   },
   {
+    regex: /\bsk-proj-[a-zA-Z0-9_-]{20,}/,
+    label: 'OpenAI project key exposure',
+    layer: 'L0',
+    severity: 'high',
+    signal: 'OpenAI sk-proj-* project API key pattern detected',
+  },
+  {
     regex: /\bsk-[a-zA-Z0-9]{20,}/,
     label: 'OpenAI API key exposure',
     layer: 'L0',
@@ -287,10 +296,12 @@ function resolveVerdict(signals: ThreatSignal[]): {
   recommended_action: RecommendedAction;
   explanation: string;
 } {
+  const thresholds = loadP0Weights().verdict_thresholds;
+
   if (signals.length === 0) {
     return {
       verdict: 'clean',
-      confidence: 0.95,
+      confidence: thresholds.clean_confidence,
       recommended_action: 'pass',
       explanation: 'No threat signals detected.',
     };
@@ -307,7 +318,7 @@ function resolveVerdict(signals: ThreatSignal[]): {
     const top = signals.find((s) => s.severity === 'critical')!;
     return {
       verdict: 'blocked',
-      confidence: 0.97,
+      confidence: thresholds.block_confidence_infra,
       recommended_action: 'block',
       explanation: `Infrastructure-level threat detected: ${top.label}. Message dropped.`,
     };
@@ -318,7 +329,7 @@ function resolveVerdict(signals: ThreatSignal[]): {
     const top = signals.find((s) => s.severity === 'critical')!;
     return {
       verdict: 'blocked',
-      confidence: 0.93,
+      confidence: thresholds.block_confidence,
       recommended_action: 'block',
       explanation: `Injection pattern detected: ${top.label}. Message dropped.`,
     };
@@ -329,7 +340,7 @@ function resolveVerdict(signals: ThreatSignal[]): {
     const top = signals.find((s) => s.severity === 'high')!;
     return {
       verdict: 'flagged',
-      confidence: 0.8,
+      confidence: thresholds.flag_confidence_high,
       recommended_action: 'warn',
       explanation: `Suspicious pattern flagged: ${top.label}. Passing with warning (P0 warn-only mode).`,
     };
@@ -339,7 +350,7 @@ function resolveVerdict(signals: ThreatSignal[]): {
   const top = signals[0];
   return {
     verdict: 'flagged',
-    confidence: 0.6,
+    confidence: thresholds.flag_confidence_low,
     recommended_action: 'warn',
     explanation: `Low-severity signal detected: ${top.label}. Monitor.`,
   };
@@ -368,19 +379,28 @@ export async function rayScan(input: RayScanInput): Promise<RayScanOutput> {
     };
   }
 
-  // Run P0 pattern battery
+  // Run P0 pattern battery with adaptive weights
+  const weights = loadP0Weights();
   for (const pattern of PATTERNS) {
     const match = content.match(pattern.regex);
     if (match) {
+      const patternWeight = weights.pattern_weights[pattern.label] ?? 1.0;
+      // Weight below 0.1 = pattern effectively suppressed (learned false positive)
+      if (patternWeight < 0.1) continue;
+
+      // Severity override from Phantom learning, else use static default
+      const severity =
+        weights.severity_overrides[pattern.label] ?? pattern.severity;
+
       signals.push({
         layer: pattern.layer,
         label: pattern.label,
         signal: pattern.signal,
-        severity: pattern.severity,
+        severity,
         matched_pattern: match[0].substring(0, 80), // truncate for log safety
       });
       raw_signals.push(
-        `[${pattern.layer}:${pattern.severity}] ${pattern.signal} — matched: "${match[0].substring(0, 60)}"`,
+        `[${pattern.layer}:${severity}] ${pattern.signal} — matched: "${match[0].substring(0, 60)}" (w:${patternWeight.toFixed(2)})`,
       );
     }
   }
@@ -400,6 +420,27 @@ export async function rayScan(input: RayScanInput): Promise<RayScanOutput> {
 
   const { verdict, confidence, recommended_action, explanation } =
     resolveVerdict(finalSignals);
+
+  // Log verdict for Phantom training data
+  try {
+    getDefaultScanLog().logScan({
+      timestamp: new Date().toISOString(),
+      scan_id,
+      tier: 'p0',
+      channel: input.source.channel,
+      verdict,
+      confidence,
+      recommended_action,
+      threat_layers: finalSignals.map((s) => ({
+        layer: s.layer,
+        label: s.label,
+        severity: s.severity,
+      })),
+      matched_patterns: finalSignals.map((s) => s.label),
+    });
+  } catch {
+    /* never block scan pipeline on log failure */
+  }
 
   return {
     scan_id,
@@ -487,13 +528,12 @@ export function blockedNotification(
   originalSender: string | null,
 ): string {
   const layers = result.threat_layers
-    .map((t) => `${t.layer}: ${t.label} (${t.severity})`)
-    .join('\n  ');
+    .map((t) => `  ${t.layer}: ${t.label} (${t.severity})`)
+    .join('\n');
   return [
-    `🛡️ Ray blocked a message`,
-    `From: ${originalSender ?? 'unknown'}`,
-    `Scan ID: ${result.scan_id}`,
-    `Threats:\n  ${layers}`,
-    `Reason: ${result.explanation}`,
+    `\uD83D\uDEE1\uFE0F RAI: blocked`,
+    ...(originalSender ? [`From: ${originalSender}`] : []),
+    ...(layers ? [layers] : []),
+    result.explanation,
   ].join('\n');
 }

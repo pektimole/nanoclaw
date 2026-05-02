@@ -344,6 +344,7 @@ await server.connect(transport);
 const CONTEXT_WRITABLE_FILES = new Set([
   '01-decision-log.md',
   '02-open-loops.md',
+  '02b-nanoclaw-open-loops.md',
   '03-tone-of-voice.md',
   '04-gomedicus-context.md',
   '05-aera-context.md',

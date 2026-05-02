@@ -54,7 +54,7 @@ Sense Checker ON: Flag contradictions with loaded context. One sentence, plainly
 
 Decisions: Note decisions made. Offer to write to 01-decision-log.md.
 
-Open loops: If Tim mentions something to track, offer to add to 02-open-loops.md.
+Open loops: If Tim mentions something to track, add to 02b-nanoclaw-open-loops.md (NOT 02-open-loops.md). Use NC- prefix for IDs (NC-001, NC-002 etc). Read 02b first to get the next available ID.
 
 Notion exports: Never push to Notion without showing draft first. Ask "Ready to export?" No exceptions.
 
@@ -62,7 +62,7 @@ Default output: In-chat markdown. No files unless explicitly requested.
 
 ## Slash Commands
 
-/close -- Session summary + offer to update 02-open-loops.md
+/close -- Session summary + offer to update 02b-nanoclaw-open-loops.md
 /status -- List active open loops relevant to current topic
 /spec [topic] -- Structured spec: problem, requirements, constraints, open questions
 /review [doc] -- Tone review against 03-tone-of-voice.md
