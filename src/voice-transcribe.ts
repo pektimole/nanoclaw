@@ -1,12 +1,14 @@
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
 import { logger } from './logger.js';
 
 const MAC_ALIVE_FILE = '/tmp/mac-alive';
 const MAC_ALIVE_THRESHOLD_S = 300; // 5 minutes
 const MAC_TRANSCRIBE_URL = 'http://localhost:9877/transcribe';
-const WHISPER_SCRIPT = '/home/tim/whisper.cpp/transcribe.sh';
+// VPS fallback: the yt_transcriber Flask service (ffmpeg -> 16kHz WAV -> whisper).
+// Replaces the old raw transcribe.sh, which fed opus to whisper unconverted and
+// returned garbage ("(speaking in foreign language)") for WhatsApp voice notes.
+const VPS_TRANSCRIBE_URL = 'http://127.0.0.1:7700/transcribe';
 const AUDIO_DIR = '/tmp/nanoclaw-audio';
 
 // Ensure audio directory exists
@@ -64,14 +66,28 @@ async function transcribeViaMac(audioPath: string): Promise<string | null> {
  * Transcribe audio via VPS whisper.cpp (local fallback).
  * Returns transcript text or null on failure.
  */
-function transcribeViaVPS(audioPath: string): string | null {
+async function transcribeViaVPS(audioPath: string): Promise<string | null> {
   try {
-    const result = execSync(`${WHISPER_SCRIPT} ${audioPath} auto`, {
-      timeout: 300000, // 5 min timeout for long audio
-      encoding: 'utf-8',
-    }).trim();
-    logger.info({ length: result.length }, 'VPS transcription complete');
-    return result;
+    const audioData = fs.readFileSync(audioPath);
+    const form = new FormData();
+    form.append('file', new Blob([audioData]), path.basename(audioPath));
+    const res = await fetch(VPS_TRANSCRIBE_URL, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(300000), // 5 min for long audio
+    });
+    if (!res.ok) {
+      logger.error({ status: res.status }, 'VPS transcription failed');
+      return null;
+    }
+    const data = (await res.json()) as { transcript?: string; error?: string };
+    if (data.error) {
+      logger.error({ error: data.error }, 'VPS transcription error');
+      return null;
+    }
+    const transcript = (data.transcript || '').trim();
+    logger.info({ length: transcript.length }, 'VPS transcription complete');
+    return transcript || null;
   } catch (err) {
     logger.error({ err }, 'VPS transcription error');
     return null;
@@ -79,28 +95,28 @@ function transcribeViaVPS(audioPath: string): string | null {
 }
 
 /**
- * Transcribe audio file. Routes to Mac if online, otherwise VPS.
+ * Transcribe audio file. VPS Flask service is the primary path (reliable,
+ * same host, proper ffmpeg->16kHz WAV conversion). The Mac transcriber is only
+ * a last-resort fallback if VPS fails AND the Mac is online, to avoid the 60s
+ * stall that Mac-first routing caused when the Mac endpoint was unresponsive.
  * Returns { transcript, source } or null on failure.
  */
 export async function transcribeAudio(
   audioPath: string,
 ): Promise<{ transcript: string; source: 'mac' | 'vps' } | null> {
-  const macOnline = isMacOnline();
-
-  if (macOnline) {
-    logger.info('Routing transcription to Mac');
-    const transcript = await transcribeViaMac(audioPath);
-    if (transcript) {
-      return { transcript, source: 'mac' };
-    }
-    // Mac failed, fall through to VPS
-    logger.warn('Mac transcription failed, falling back to VPS');
-  }
-
-  logger.info('Routing transcription to VPS whisper.cpp');
-  const transcript = transcribeViaVPS(audioPath);
+  logger.info('Routing transcription to VPS transcriber service');
+  const transcript = await transcribeViaVPS(audioPath);
   if (transcript) {
     return { transcript, source: 'vps' };
+  }
+
+  // Last-resort fallback: Mac transcriber, only if it reports online.
+  if (isMacOnline()) {
+    logger.warn('VPS transcription failed, trying Mac fallback');
+    const macTranscript = await transcribeViaMac(audioPath);
+    if (macTranscript) {
+      return { transcript: macTranscript, source: 'mac' };
+    }
   }
 
   return null;
