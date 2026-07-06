@@ -44,6 +44,8 @@ export interface ScanLogEntry {
     verdict: string;
     confidence: number;
   }>;
+  /** Which surface produced this scan event (nanoclaw | browser_extension | mobile_pwa) */
+  surface?: string;
 }
 
 export interface CorrectionEntry {

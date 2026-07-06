@@ -36,3 +36,9 @@ groups/global/*
 .nanoclaw/
 
 agents-sdk-docs
+
+# Backup snapshots & Python cache (never source of truth)
+*.bak
+*.bak-*
+*.bak.*
+__pycache__/

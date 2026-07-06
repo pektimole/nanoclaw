@@ -73,7 +73,7 @@ export interface FsGitPolicy {
   allowedSourceGroups: Set<SourceGroup>;
   /** First-level subdirectories permitted under `root`. Empty = flat only. */
   allowedSubdirs: Set<string>;
-  /** Allowed file extensions, including the leading dot (e.g. ".md"). */
+  /** Allowed file extensions, including the leading dot (e.g. .md). */
   allowedExtensions: Set<string>;
   /** Basenames blocked even inside an allowed subdir (e.g. REGISTRY.md). */
   blockedBasenames: Set<string>;
@@ -83,18 +83,52 @@ export interface FsGitPolicy {
   maxDepth: number;
 }
 
+// Credential patterns that must never appear in file content.
+// Checked as check 9b after size check — fail-closed, returns deny.
+const CREDENTIAL_PATTERNS: Array<{ label: string; regex: RegExp }> = [
+  { label: 'Anthropic API key', regex: /sk-ant-[a-zA-Z0-9_-]{20,}/ },
+  { label: 'OpenAI project key', regex: /sk-proj-[a-zA-Z0-9_-]{20,}/ },
+  { label: 'OpenAI API key', regex: /sk-[a-zA-Z0-9]{20,}/ },
+  { label: 'GitHub personal access token', regex: /ghp_[a-zA-Z0-9]{36,}/ },
+  { label: 'GitHub OAuth token', regex: /gho_[a-zA-Z0-9]{36,}/ },
+  { label: 'AWS access key', regex: /AKIA[0-9A-Z]{16}/ },
+  {
+    label: 'Generic bearer token in content',
+    regex: /Authorization:\s*Bearer\s+[A-Za-z0-9+/=._-]{20,}/i,
+  },
+];
+
 /**
- * Default policy mirrors the NanoClaw `whatsapp_main` write gate exactly.
- * This is the policy that has been running in production since 2026-03-21.
+ * Default policy for all NanoClaw channels.
+ * Covers whatsapp_main, telegram_main, and slack_main.
  * Override per-deployment by constructing a new FsGitPolicy.
  */
 export function nanoclawDefaultPolicy(root: string): FsGitPolicy {
   return {
     root,
-    allowedSourceGroups: new Set(['whatsapp_main']),
-    allowedSubdirs: new Set(['proposals', 'pending-decisions', 'spikes']),
+    allowedSourceGroups: new Set([
+      'whatsapp_main',
+      'telegram_main',
+      'slack_main',
+    ]),
+    allowedSubdirs: new Set([
+      'proposals',
+      'pending-decisions',
+      'spikes',
+      'workstreams',
+      'sessions',
+      'counterparties',
+      'playbooks',
+      'tactics',
+    ]),
     allowedExtensions: new Set(['.md']),
-    blockedBasenames: new Set(['00-WAKE.md', '00-README.md', 'REGISTRY.md']),
+    blockedBasenames: new Set([
+      '00-WAKE.md',
+      '00-README.md',
+      'REGISTRY.md',
+      '01-decision-log.md',
+      '03-tone-of-voice.md',
+    ]),
     maxContentBytes: 50_000,
     maxDepth: 2,
   };
@@ -120,7 +154,7 @@ export function evaluate(action: FsGitAction, policy: FsGitPolicy): Verdict {
     return {
       decision: 'deny',
       rule: 'source-group-not-allowed',
-      reason: `source group "${action.sourceGroup}" not in allowlist`,
+      reason: `source group ${action.sourceGroup} not in allowlist`,
     };
   }
 
@@ -138,7 +172,7 @@ export function evaluate(action: FsGitAction, policy: FsGitPolicy): Verdict {
     return {
       decision: 'deny',
       rule: 'path-traversal-literal',
-      reason: 'path contains ".." segment',
+      reason: 'path contains .. segment',
     };
   }
 
@@ -148,7 +182,7 @@ export function evaluate(action: FsGitAction, policy: FsGitPolicy): Verdict {
     return {
       decision: 'deny',
       rule: 'extension-not-allowed',
-      reason: `extension "${ext}" not in allowlist`,
+      reason: `extension ${ext} not in allowlist`,
     };
   }
 
@@ -167,7 +201,7 @@ export function evaluate(action: FsGitAction, policy: FsGitPolicy): Verdict {
     return {
       decision: 'deny',
       rule: 'subdir-not-allowed',
-      reason: `subdirectory "${segments[0]}" not in allowlist`,
+      reason: `subdirectory ${segments[0]} not in allowlist`,
     };
   }
 
@@ -178,7 +212,7 @@ export function evaluate(action: FsGitAction, policy: FsGitPolicy): Verdict {
     return {
       decision: 'deny',
       rule: 'hidden-or-empty-basename',
-      reason: 'basename is empty or starts with "."',
+      reason: 'basename is empty or starts with .',
     };
   }
 
@@ -187,7 +221,7 @@ export function evaluate(action: FsGitAction, policy: FsGitPolicy): Verdict {
     return {
       decision: 'deny',
       rule: 'basename-blocked',
-      reason: `basename "${basename}" is in blocklist`,
+      reason: `basename ${basename} is in blocklist`,
     };
   }
 
@@ -201,6 +235,17 @@ export function evaluate(action: FsGitAction, policy: FsGitPolicy): Verdict {
     };
   }
 
+  // 9b. Credential content scanner — blocks exfiltration via context writes
+  for (const { label, regex } of CREDENTIAL_PATTERNS) {
+    if (regex.test(action.content)) {
+      return {
+        decision: 'deny',
+        rule: 'credential-in-content',
+        reason: `content contains potential credential: ${label}`,
+      };
+    }
+  }
+
   // 10. Resolved-path containment (defeats symlink + tricky path tricks)
   const resolved = path.resolve(policy.root, action.file);
   const rootWithSep = policy.root.endsWith('/')
@@ -210,12 +255,12 @@ export function evaluate(action: FsGitAction, policy: FsGitPolicy): Verdict {
     return {
       decision: 'deny',
       rule: 'resolved-path-outside-root',
-      reason: `resolved path "${resolved}" escapes root "${policy.root}"`,
+      reason: `resolved path ${resolved} escapes root ${policy.root}`,
     };
   }
 
   // 11. Commit message sanitization (sanitize-and-allow, never deny)
-  // Matches NanoClaw rule: replace ' " ` $ \ with '-'.
+  // Matches NanoClaw rule: replace '  ` $ \ with -.
   const safeMsg = action.commitMessage.replace(/['"`$\\]/g, '-');
   if (safeMsg !== action.commitMessage) {
     return {

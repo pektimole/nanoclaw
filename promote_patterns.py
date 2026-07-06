@@ -103,7 +103,7 @@ def run_review():
     max_tl = load_existing_max()
 
     rows = conn.execute(
-        "SELECT id, name, rai_layer, manipulation_type, novelty, instance_count, instance_ids, card "
+        "SELECT id, name, rai_layer, manipulation_type, novelty, instance_count, instance_ids, card, coverage, dup_of "
         "FROM patterns WHERE status='candidate' ORDER BY instance_count DESC"
     ).fetchall()
 
@@ -119,11 +119,12 @@ def run_review():
 
     session_approved = 0
 
-    for pid, name, rai_layer, vs_class, novelty, count, ids_json, card in rows:
+    for pid, name, rai_layer, vs_class, novelty, count, ids_json, card, coverage, dup_of in rows:
         default_beat = BEAT_DEFAULTS.get(vs_class) or BEAT_DEFAULTS.get(rai_layer) or "Beat 1"
 
         print(f"\n{'─'*65}")
-        print(f"Pattern #{pid}  [{count} signals | {novelty} | {rai_layer} / {vs_class}]")
+        _dup = f" | \u26a0DUP?->{dup_of}" if dup_of else ""
+        print(f"Pattern #{pid}  [{count} signals | {novelty} | {rai_layer} / {vs_class} | cov:{coverage or '?'}{_dup}]")
         print(f"Name      : {name}")
         print(f"DeckBeat  : {default_beat} (default, override with y beat2)")
         print()
@@ -182,6 +183,7 @@ def run_review():
                 "promoted":        datetime.date.today().isoformat(),
                 "description":     (card or name)[:800],
                 "deck_beat":       deck_beat,
+                "coverage":        coverage or "scan",
                 "source_signals":  (json.loads(ids_json or "[]") if ids_json else [])[:5],
             }
             with open(LIBRARY_JSONL, "a") as fh:

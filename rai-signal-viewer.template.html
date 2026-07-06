@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>(R)AI Signal Viewer</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,300;1,9..144,400&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+  --bg: #080808;
+  --surface: #0e0e0e;
+  --card: #111111;
+  --border: #1c1c1c;
+  --dim: #2a2a2a;
+  --text: #f0ede8;
+  --muted: #666666;
+  --accent: #e8ff00;
+  --red: #ff3333;
+  --amber: #ffa028;
+  --blu: #4488ff;
+  --violet: #aa44ff;
+  --teal: #00e5c8;
+  --L0: #ffcc00;
+  --L1: #ffa028;
+  --L2: #ffa028;
+  --L3: #ff3333;
+  --L4: #aa44ff;
+  --L5: #ff3333;
+  --hn: #ff6600;
+  --reddit: #ff4500;
+  --approve: #e8ff00;
+  --reject: #ff3333;
+}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font-size:14px;min-height:100vh}
+  
+  /* Header */
+  .header{background:#0d0f15;border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:100}
+  .logo{font-size:18px;font-weight:700;letter-spacing:-.5px;color:#fff}
+  .logo span{color:var(--L3)}
+  .stats{display:flex;gap:10px;margin-left:auto;align-items:center}
+  .stat{background:var(--card);border:1px solid var(--border);border-radius: 0;padding:4px 10px;font-size:12px;color:var(--muted)}
+  .stat strong{color:var(--text)}
+  .refresh-btn{background:#1e2228;border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius: 0;cursor:pointer;font-size:12px;transition:all .15s}
+  .refresh-btn:hover{background:#252b33;border-color:#374151}
+  .sync-indicator{width:8px;height:8px;border-radius:50%;background:#374151;transition:background .3s}
+  .sync-indicator.live{background:#22c55e}
+  .sync-indicator.syncing{background:#eab308;animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+  /* Tabs */
+  .tabs{background:#0d0f15;border-bottom:1px solid var(--border);padding:0 20px;display:flex;gap:2px}
+  .tab{padding:10px 16px;cursor:pointer;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;transition:all .15s;white-space:nowrap}
+  .tab:hover{color:var(--text)}
+  .tab.active{color:var(--text);border-bottom-color:#6366f1}
+  .tab-count{background:var(--border);border-radius: 0;padding:1px 7px;font-size:11px;margin-left:6px}
+  .tab.active .tab-count{background:#312e81;color:#a5b4fc}
+
+  /* Filter bar */
+  .filterbar{padding:12px 20px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#0a0c12}
+  .filter-label{color:var(--muted);font-size:12px;margin-right:4px}
+  .lbadge{padding:3px 10px;border-radius: 0;font-size:11px;font-weight:600;cursor:pointer;border:1px solid transparent;opacity:.55;transition:all .15s;letter-spacing:.3px}
+  .lbadge:hover,.lbadge.on{opacity:1;border-color:currentColor}
+  .lbadge.L0{color:var(--L0)}
+  .lbadge.L1{color:var(--L1)}
+  .lbadge.L2{color:var(--L2)}
+  .lbadge.L3{color:var(--L3)}
+  .lbadge.L4{color:var(--L4)}
+  .lbadge.L5{color:var(--L5)}
+  .sep{color:var(--border);margin:0 4px}
+
+  /* Grid */
+  .grid{padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;align-items:start}
+  .empty{padding:60px;text-align:center;color:var(--muted);grid-column:1/-1}
+
+  /* Card */
+  .card{background:var(--card);border:1px solid var(--border);border-radius: 0;overflow:hidden;transition:border-color .15s}
+  .card:hover{border-color:#374151}
+  .card.approved{border-color:#166534;background:#0a1a0f}
+  .card.rejected{border-color:#374151;opacity:.5}
+  .card.promoted{border-color:#312e81;background:#0e0c1a}
+  .card-top{padding:12px 14px 10px;border-bottom:1px solid var(--border)}
+  .card-badges{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+  .src-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius: 0;letter-spacing:.5px}
+  .src-hn{background:#2d1a00;color:var(--hn);border:1px solid #3d2500}
+  .src-reddit{background:#2d1000;color:var(--reddit);border:1px solid #3d1800}
+  .lclass-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius: 0;letter-spacing:.5px;border:1px solid currentColor}
+  .pts{font-size:11px;color:var(--muted);margin-left:auto}
+  .pattern{font-size:13px;font-weight:600;color:#c7d2fe;line-height:1.4;margin-bottom:6px}
+  .reasoning{font-size:12px;color:var(--muted);font-style:italic;line-height:1.4}
+  .card-body{padding:10px 14px}
+  .post-title{font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px;line-height:1.4}
+  .post-title a{color:inherit;text-decoration:none}
+  .post-title a:hover{color:#818cf8;text-decoration:underline}
+  .post-body{font-size:12px;color:var(--muted);line-height:1.5;max-height:72px;overflow:hidden;position:relative}
+  .post-body::after{content:'';position:absolute;bottom:0;left:0;right:0;height:24px;background:linear-gradient(transparent,var(--card))}
+  .card.approved .post-body::after{background:linear-gradient(transparent,#0a1a0f)}
+  .card.promoted .post-body::after{background:linear-gradient(transparent,#0e0c1a)}
+  .card-actions{padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center}
+  .btn-approve{background:#14532d;border:1px solid #166534;color:var(--approve);padding:5px 14px;border-radius: 0;cursor:pointer;font-size:12px;font-weight:600;transition:all .15s;flex:1}
+  .btn-approve:hover{background:#166534}
+  .btn-reject{background:#1a0a0a;border:1px solid #3f1515;color:#f87171;padding:5px 14px;border-radius: 0;cursor:pointer;font-size:12px;font-weight:600;transition:all .15s}
+  .btn-reject:hover{background:#3f1515}
+  .lselect{background:var(--bg);border:1px solid var(--border);color:var(--muted);border-radius: 0;padding:5px 8px;font-size:11px;flex:0 0 auto}
+  .status-pill{font-size:11px;padding:3px 10px;border-radius: 0;font-weight:600}
+  .pill-approved{background:#14532d;color:var(--approve)}
+  .pill-rejected{background:#1a0a0a;color:#f87171}
+  .pill-promoted{background:#312e81;color:#a5b4fc}
+
+  /* Review queue bar */
+  .queuebar{position:fixed;bottom:0;left:0;right:0;background:#111827;border-top:1px solid #1e2228;padding:10px 20px;display:flex;align-items:center;gap:12px;font-size:12px;z-index:200;transform:translateY(100%);transition:transform .3s}
+  .queuebar.visible{transform:translateY(0)}
+  .queue-msg{color:#d1d5db}
+  .queue-count{background:#312e81;color:#a5b4fc;border-radius: 0;padding:2px 10px;font-weight:700}
+  .btn-sync{background:#4f46e5;border:none;color:#fff;padding:6px 16px;border-radius: 0;cursor:pointer;font-size:12px;font-weight:600}
+  .btn-sync:hover{background:#4338ca}
+  .btn-clear{background:transparent;border:1px solid #374151;color:var(--muted);padding:5px 12px;border-radius: 0;cursor:pointer;font-size:12px}
+
+  /* Toast */
+  .toast{position:fixed;top:16px;right:16px;background:#1f2937;border:1px solid #374151;color:#e5e7eb;padding:10px 16px;border-radius: 0;font-size:13px;z-index:999;opacity:0;transform:translateY(-8px);transition:all .3s;pointer-events:none}
+  .toast.show{opacity:1;transform:translateY(0)}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  opacity: .03;
+  pointer-events: none;
+  z-index: 9998;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+</style>
+</head>
+<body>
+
+<div class="toast" id="toast"></div>
+
+<div class="header">
+  <div class="logo" style="font-family:Fraunces,serif;font-style:italic;font-weight:300;letter-spacing:-0.03em"><span style="color:var(--accent)">(R)</span>AI Signal Viewer</div>
+  <div class="sync-indicator" id="syncDot" title="MCP sync status"></div>
+  <div class="stats" id="statsBar"></div>
+  <button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
+</div>
+
+<div class="tabs" id="tabBar">
+  <div class="tab active" data-tab="patterns" onclick="switchTab('patterns')">
+    Pattern Cards <span class="tab-count" id="cnt-patterns">0</span>
+  </div>
+  <div class="tab" data-tab="pending" onclick="switchTab('pending')">
+    Raw Signals <span class="tab-count" id="cnt-pending">0</span>
+  </div>
+  <div class="tab" data-tab="approved" onclick="switchTab('approved')">
+    Approved <span class="tab-count" id="cnt-approved">0</span>
+  </div>
+  <div class="tab" data-tab="promoted" onclick="switchTab('promoted')">
+    Promoted <span class="tab-count" id="cnt-promoted">0</span>
+  </div>
+  <div class="tab" data-tab="library" onclick="switchTab('library')">
+    Threat Library <span class="tab-count" id="cnt-library">0</span>
+  </div>
+</div>
+
+<div class="filterbar">
+  <span class="filter-label">Filter:</span>
+  <div class="lbadge L0 on" onclick="toggleFilter('L0')" data-filter="L0">L0 Impersonation</div>
+  <div class="lbadge L1 on" onclick="toggleFilter('L1')" data-filter="L1">L1 Nudge</div>
+  <div class="lbadge L2 on" onclick="toggleFilter('L2')" data-filter="L2">L2 Urgency</div>
+  <div class="lbadge L3 on" onclick="toggleFilter('L3')" data-filter="L3">L3 Gaslighting</div>
+  <div class="lbadge L4 on" onclick="toggleFilter('L4')" data-filter="L4">L4 Distortion</div>
+  <div class="lbadge L5 on" onclick="toggleFilter('L5')" data-filter="L5">L5 Deepfake</div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<div class="queuebar" id="queueBar">
+  <span class="queue-count" id="queueCount">0</span>
+  <span class="queue-msg">reviews queued — push to VPS to apply</span>
+  <button class="btn-sync" onclick="pushReviews()">Push Reviews</button>
+  <button class="btn-clear" onclick="clearQueue()">Clear</button>
+</div>
+
+<script>
+// ── Embedded data (refreshed on each re-render) ──────────────────────────────
+const EMBEDDED = __EMBEDDED_DATA__;
+let data = EMBEDDED;
+const SIGNALS_URL = '__SIGNALS_URL__'; // public read endpoint (optional)
+let activeTab = 'patterns';
+let activeFilters = new Set(['L0','L1','L2','L3','L4','L5']);
+function loadQueue() { try { return JSON.parse(localStorage.getItem('rai_review_queue') || '[]'); } catch(e) { return []; } }
+function saveQueue() { try { localStorage.setItem('rai_review_queue', JSON.stringify(reviewQueue)); } catch(e) {} }
+let reviewQueue = loadQueue();
+let refreshTimer = null;
+
+// ── MCP bridge (Cowork callMcpTool) ──────────────────────────────────────────
+const MCP_NS = 'mcp__82e39fbf-3864-45e2-b982-a935932a3c6e';
+
+async function mcpRead(path) {
+  try {
+    const r = await window.cowork.callMcpTool(MCP_NS + '__read_file', { path });
+    let raw = '';
+    if (typeof r === 'string') raw = r;
+    else if (r && Array.isArray(r)) raw = r.map(x => typeof x === 'string' ? x : (x?.text || '')).join('');
+    else if (r && r.content) { raw = typeof r.content === 'string' ? r.content : (Array.isArray(r.content) ? r.content.map(x => x?.text || '').join('') : ''); }
+    else if (r && r.text) raw = r.text;
+    else raw = JSON.stringify(r);
+    if (raw.startsWith('File not') || raw.startsWith('Error:') || raw.startsWith('Tool mcp')) return null;
+    return raw;
+  } catch(e) { return null; }
+}
+
+async function mcpWrite(path, content) {
+  try {
+    await window.cowork.callMcpTool(MCP_NS + '__write_file', { path, content });
+    return true;
+  } catch(e) { return false; }
+}
+
+// ── Data loading ─────────────────────────────────────────────────────────────
+async function loadData() {
+  setSyncing(true);
+  let got = false;
+  // 1. Public read endpoint (works if Cowork sandbox allows fetch)
+  if (SIGNALS_URL && !SIGNALS_URL.includes('__')) {
+    try {
+      const r = await fetch(SIGNALS_URL + '?t=' + Date.now(), {cache:'no-store'});
+      if (r.ok) { data = await r.json(); got = true; setSyncing(false, true); toast('Live: fetched fresh signals'); }
+    } catch(e) { /* CSP or network blocked — fall through */ }
+  }
+  // 2. MCP bridge (if host exposes it)
+  if (!got) {
+    try {
+      let raw = await mcpRead('logs/rai-poc2-signals.json');
+      if (raw) { data = typeof raw === 'string' ? JSON.parse(raw) : raw; got = true; setSyncing(false, true); }
+    } catch(e) { /* fall through */ }
+  }
+  // 3. Embedded snapshot (baked at last crawl — current as of build time)
+  if (!got) { data = EMBEDDED; setSyncing(false, false); }
+  render();
+  scheduleRefresh();
+}
+
+function scheduleRefresh() {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(loadData, 90_000); // 90s auto-refresh
+}
+
+function setSyncing(syncing, live) {
+  const d = document.getElementById('syncDot');
+  d.className = 'sync-indicator' + (syncing ? ' syncing' : live ? ' live' : '');
+  d.title = syncing ? 'Syncing…' : live ? 'Live (MCP connected)' : 'Embedded data (no MCP)';
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  updateStats();
+  renderGrid();
+  updateQueueBar();
+}
+
+function updateStats() {
+  const s = data.stats || {};
+  const lib = (data.threat_library || []).length;
+  document.getElementById('statsBar').innerHTML = `
+    <div class="stat">Pending: <strong>${s.pending || 0}</strong></div>
+    <div class="stat">Filtered: <strong>${s.filtered || 0}</strong></div>
+    <div class="stat">Library: <strong>${lib}/10</strong></div>
+  `;
+  document.getElementById('cnt-pending').textContent  = (data.pending  || []).length;
+  document.getElementById('cnt-approved').textContent = (data.approved || []).length;
+  document.getElementById('cnt-promoted').textContent = (data.promoted || []).length;
+  document.getElementById('cnt-library').textContent  = lib;
+  const pats = (data.patterns || []).filter(p => p.status !== 'rejected');
+  const novelN = pats.filter(p => p.novelty === 'novel' && (p.instance_count||0) >= 2).length;
+  document.getElementById('cnt-patterns').textContent = pats.length;
+  // Add a novel-progress stat
+  const sb = document.getElementById('statsBar');
+  if (!document.getElementById('novelStat')) {
+    sb.insertAdjacentHTML('afterbegin', '<div class="stat" id="novelStat"></div>');
+  }
+  document.getElementById('novelStat').innerHTML = 'Novel \u2265 2: <strong>' + novelN + '/10</strong>';
+}
+
+function lColor(lc) {
+  const map = {L0:'var(--L0)',L1:'var(--L1)',L2:'var(--L2)',L3:'var(--L3)',L4:'var(--L4)',L5:'var(--L5)'};
+  return map[lc] || 'var(--muted)';
+}
+function lLabel(lc) {
+  const m = {L0:'Impersonation',L1:'Nudge',L2:'Urgency',L3:'Gaslighting',L4:'Distortion',L5:'Deepfake'};
+  return m[lc] ? `${lc} ${m[lc]}` : lc || '?';
+}
+function srcBadge(item) {
+  const sub = item.subreddit;
+  return sub
+    ? `<span class="src-badge src-reddit">r/${sub}</span>`
+    : `<span class="src-badge src-hn">HN</span>`;
+}
+function timeAgo(ts) {
+  if (!ts) return '';
+  const d = Math.floor((Date.now()/1000 - ts) / 86400);
+  return d === 0 ? 'today' : d === 1 ? '1d ago' : `${d}d ago`;
+}
+
+function cardHtml(item, tab) {
+  const lc   = item.haiku_l_class || '';
+  const col  = lColor(lc);
+  const pts  = item.post_score || 0;
+  const body = (item.body || '').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/<p>/g,' ').replace(/<[^>]+>/g,'');
+  const isPending  = tab === 'pending';
+  const isApproved = tab === 'approved';
+  const statusCls  = tab === 'approved' ? 'approved' : tab === 'promoted' ? 'promoted' : tab === 'rejected' ? 'rejected' : '';
+
+  const actions = isPending ? `
+    <div class="card-actions">
+      <select class="lselect" id="sel_${item.id}" onchange="">
+        <option value="">L-class</option>
+        <option value="L0">L0 Impersonation</option>
+        <option value="L1">L1 Nudge</option>
+        <option value="L2">L2 Urgency</option>
+        <option value="L3">L3 Gaslighting</option>
+        <option value="L4">L4 Distortion</option>
+        <option value="L5">L5 Deepfake</option>
+      </select>
+      <button class="btn-approve" onclick="queueReview('${item.id}','approve')">✓ Approve</button>
+      <button class="btn-reject" onclick="queueReview('${item.id}','reject')">✕</button>
+    </div>` : isApproved ? `
+    <div class="card-actions"><span class="status-pill pill-approved">✓ Approved</span></div>` : '';
+
+  return `
+    <div class="card ${statusCls}" id="card_${item.id}">
+      <div class="card-top">
+        <div class="card-badges">
+          ${srcBadge(item)}
+          <span class="lclass-badge" style="color:${col};border-color:${col}">${lLabel(lc)}</span>
+          <span class="pts">${pts} pts · ${timeAgo(item.created_at)}</span>
+        </div>
+        <div class="pattern">${item.haiku_pattern || '—'}</div>
+        <div class="reasoning">${item.haiku_reasoning || ''}</div>
+      </div>
+      <div class="card-body">
+        <div class="post-title"><a href="${item.url}" target="_blank">${item.title || ''}</a></div>
+        <div class="post-body">${body}</div>
+      </div>
+      ${actions}
+    </div>`;
+}
+
+function novColor(n){return {novel:'#22c55e',variant:'#eab308',known:'#6b7280'}[n]||'#6b7280';}
+function vtypeLabel(v){
+  const m={VS0:'Impersonation',VS1:'Nudge',VS2:'Urgency',VS3:'Gaslighting',VS4:'Distortion',VS5:'Deepfake',VS6:'Authenticity'};
+  return m[v]?`${v} ${m[v]}`:(v||'?');
+}
+function patternCardHtml(p){
+  const nov=p.novelty||'?';
+  const novC=novColor(nov);
+  const layerUnmapped=(p.rai_layer||'').includes('unmapped');
+  const count=p.instance_count||0;
+  const promotable=(nov==='novel'||nov==='variant')&&count>=2;
+  const cardMd=(p.card||'').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+  // Light markdown: bold + line breaks
+  const cardHtml=cardMd
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\n/g,'<br>');
+  const isCand=p.status==='candidate';
+  const statusCls=p.status==='approved'?'promoted':p.status==='rejected'?'rejected':'';
+  const actions=isCand?`
+    <div class="card-actions">
+      <button class="btn-approve" onclick="queuePattern(${p.id},'approve','${p.rai_layer||''}')">\u2605 Promote to Library</button>
+      <button class="btn-reject" onclick="queuePattern(${p.id},'reject','')">\u2715</button>
+    </div>`:p.status==='approved'?`
+    <div class="card-actions"><span class="status-pill pill-promoted">\u2605 In Threat Library</span></div>`:'';
+  return `
+    <div class="card ${statusCls}" id="pat_${p.id}" style="grid-column:span 1">
+      <div class="card-top">
+        <div class="card-badges">
+          <span class="lclass-badge" style="color:${novC};border-color:${novC}">${nov.toUpperCase()}</span>
+          <span class="src-badge" style="background:#1a1530;color:#a5b4fc;border:1px solid #312e81">${vtypeLabel(p.manipulation_type)}</span>
+          ${layerUnmapped?`<span class="src-badge" style="background:#2d0a1a;color:#f9a8d4;border:1px solid #831843">TAXONOMY GAP</span>`:`<span class="pts">${p.rai_layer||''}</span>`}
+          <span class="pts">${count}\u00d7 sources</span>
+        </div>
+        <div class="pattern" style="font-size:14px;color:#e2e4e9">${p.name||'\u2014'}</div>
+        <div class="reasoning">${p.novelty_rationale||''}</div>
+      </div>
+      <div class="card-body">
+        <div style="font-size:12px;line-height:1.6;color:#cbd5e1">${cardHtml}</div>
+      </div>
+      ${actions}
+    </div>`;
+}
+function libraryCardHtml(item) {
+  const col = lColor(item.l_class);
+  return `
+    <div class="card promoted">
+      <div class="card-top">
+        <div class="card-badges">
+          <span class="lclass-badge" style="color:${col};border-color:${col}">${item.l_class}</span>
+          <span class="pts">Pattern #${item.id}</span>
+        </div>
+        <div class="pattern">${item.pattern_name || '—'}</div>
+      </div>
+      <div class="card-body">
+        <div class="post-body">${(item.description||'').slice(0,300)}</div>
+      </div>
+      <div class="card-actions"><span class="status-pill pill-promoted">★ In Threat Library</span></div>
+    </div>`;
+}
+
+function renderGrid() {
+  const grid = document.getElementById('grid');
+  let items = [];
+  let html  = '';
+
+  if (activeTab === 'patterns') {
+    items = (data.patterns || []).filter(p => p.status !== 'rejected');
+    // novelty filter reuse: map filter set to novelty if any nov filter active, else show all
+    if (!items.length) { grid.innerHTML = '<div class="empty">No enriched patterns yet.<br>Run: rai-producer.py --all on the VPS.</div>'; return; }
+    // Sort novel-multi first
+    items.sort((a,b)=>{
+      const rank=n=>n==='novel'?0:n==='variant'?1:2;
+      const r=rank(a.novelty)-rank(b.novelty);
+      return r!==0?r:(b.instance_count||0)-(a.instance_count||0);
+    });
+    grid.innerHTML = items.map(patternCardHtml).join('');
+    return;
+  }
+  if (activeTab === 'library') {
+    items = data.threat_library || [];
+    if (!items.length) { grid.innerHTML = '<div class="empty">No promoted patterns yet.<br>Review and approve pending signals to build the library.</div>'; return; }
+    html = items.map(libraryCardHtml).join('');
+  } else {
+    items = (data[activeTab] || []).filter(i => activeFilters.has(i.haiku_l_class || 'L0'));
+    if (!items.length) { grid.innerHTML = `<div class="empty">No ${activeTab} signals${activeFilters.size < 6 ? ' matching filters' : ''}.</div>`; return; }
+    html = items.map(i => cardHtml(i, activeTab)).join('');
+  }
+  grid.innerHTML = html;
+  // Restore l-select values from queue
+  reviewQueue.forEach(r => {
+    const sel = document.getElementById('sel_' + r.id);
+    if (sel && r.l_class) sel.value = r.l_class;
+  });
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+function queueReview(id, action) {
+  const sel  = document.getElementById('sel_' + id);
+  const lc   = sel ? sel.value : '';
+  // Remove any existing review for this id
+  reviewQueue = reviewQueue.filter(r => r.id !== id);
+  reviewQueue.push({id, action, l_class: lc || null, ts: Math.floor(Date.now()/1000)});
+  saveQueue();
+  // Visual feedback
+  const card = document.getElementById('card_' + id);
+  if (card) {
+    card.style.transition = 'opacity .3s, transform .3s';
+    card.style.opacity = '0.3';
+    card.style.transform = 'scale(.97)';
+    setTimeout(() => {
+      // Move from pending array to local approved/rejected
+      const idx = (data.pending || []).findIndex(i => i.id === id);
+      if (idx !== -1) {
+        const [item] = data.pending.splice(idx, 1);
+        item.status = action === 'approve' ? 'approved' : 'rejected';
+        if (action === 'approve') (data.approved = data.approved || []).unshift(item);
+        data.stats.pending = (data.pending || []).length;
+      }
+      render();
+    }, 300);
+  }
+  toast(action === 'approve' ? `✓ Queued: approve` : `✕ Queued: reject`);
+  updateQueueBar();
+}
+
+function queuePattern(id, action, layer) {
+  reviewQueue = reviewQueue.filter(r => !(r.type==='pattern' && r.id===id));
+  reviewQueue.push({type:'pattern', id, action, rai_layer: layer || null, ts: Math.floor(Date.now()/1000)});
+  localStorage.setItem('rai_review_queue', JSON.stringify(reviewQueue));
+  const card = document.getElementById('pat_' + id);
+  if (card) {
+    card.style.transition='opacity .3s,transform .3s';
+    card.style.opacity='0.3'; card.style.transform='scale(.97)';
+    setTimeout(()=>{
+      const p=(data.patterns||[]).find(x=>x.id===id);
+      if(p) p.status = action==='approve'?'approved':'rejected';
+      render();
+    },300);
+  }
+  toast(action==='approve'?'\u2605 Queued: promote pattern':'\u2715 Queued: reject');
+  updateQueueBar();
+}
+
+async function pushReviews() {
+  if (!reviewQueue.length) return;
+  // Write to .md — VPS MCP only allows .md writes; VPS crawler reads this on next run
+  const ok = await mcpWrite('logs/rai-poc2-reviews.md', JSON.stringify(reviewQueue, null, 2));
+  if (ok) {
+    toast(`✓ ${reviewQueue.length} reviews pushed to no5-context`);
+    reviewQueue = [];
+    saveQueue();
+    updateQueueBar();
+  } else {
+    const json = JSON.stringify(reviewQueue, null, 2);
+    prompt('MCP not available. Copy and paste to VPS:\n~/no5-context/logs/rai-poc2-reviews.md', json);
+  }
+}
+
+function clearQueue() {
+  if (!confirm('Clear review queue? This discards unsaved reviews.')) return;
+  reviewQueue = [];
+  saveQueue();
+  updateQueueBar();
+  toast('Queue cleared');
+}
+
+function updateQueueBar() {
+  const bar = document.getElementById('queueBar');
+  document.getElementById('queueCount').textContent = reviewQueue.length;
+  bar.classList.toggle('visible', reviewQueue.length > 0);
+}
+
+// ── Tabs + filters ────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  renderGrid();
+}
+
+function toggleFilter(lc) {
+  const el = document.querySelector(`[data-filter="${lc}"]`);
+  if (activeFilters.has(lc)) { activeFilters.delete(lc); el.classList.remove('on'); }
+  else                        { activeFilters.add(lc);    el.classList.add('on'); }
+  renderGrid();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+// Restore queue from localStorage
+updateQueueBar();
+loadData();
+</script>
+</body>
+</html>
