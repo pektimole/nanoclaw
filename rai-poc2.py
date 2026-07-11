@@ -249,7 +249,7 @@ def classify_haiku(title, body):
     payload = {
         "model":      HAIKU_MODEL,
         "max_tokens": 200,
-        "system":     HAIKU_SYSTEM,
+        "system":     [{"type": "text", "text": HAIKU_SYSTEM, "cache_control": {"type": "ephemeral"}}],
         "messages":   [{"role": "user", "content": snippet}],
     }
     headers = {

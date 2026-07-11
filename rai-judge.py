@@ -128,7 +128,8 @@ def call_llm(model, system, user, max_tokens=800):
         log("ANTHROPIC_API_KEY missing")
         return None
     body = json.dumps({
-        "model": model, "max_tokens": max_tokens, "system": system,
+        "model": model, "max_tokens": max_tokens,
+        "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         "messages": [{"role": "user", "content": user}]
     }).encode()
     req = urllib.request.Request(ANTHROPIC_API, data=body, headers={
